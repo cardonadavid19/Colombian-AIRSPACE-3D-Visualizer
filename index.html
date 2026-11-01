@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Espacio Aéreo Colombia 3D</title>
+<meta name="description" content="Visualizador 3D del espacio aéreo colombiano (FIR, UTA, CTA, TMA, CTR, ATZ, zonas SK y deportivas) sobre relieve real, con datos del eAIP de la Aerocivil.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow+Semi+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/deck.gl@9.1.14/dist.min.js"></script>
+<script>window.TERRAIN_STATIC={elev:"data/relieve.png",tex:"data/textura.jpg",metersPerStep:25,bounds:[-84.375,-5.615985819155333,-64.6875,16.636191878397657]};</script>
+<script src="data/data.js"></script>
+<style>
+:root{
+  --ink:#16222E;        /* panel: azul tinta de carta aeronáutica */
+  --ink-2:#1F3040;
+  --ink-line:#30485C;
+  --paper:#E9EEF1;      /* texto principal */
+  --muted:#9FB2C1;
+  --magenta:#D6247A;    /* magenta de cartas VFR: selección y foco */
+  --tape:#0F1922;
+  --r-panel:14px; --r-ctl:6px;
+  --font-ui:"Barlow Semi Condensed",system-ui,sans-serif;
+  --font-title:"Barlow Condensed","Barlow Semi Condensed",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#DDEBF2;color:var(--paper);font-family:var(--font-ui);font-size:15px;overflow:hidden}
+#map{position:fixed;inset:0}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--magenta);outline-offset:2px}
+
+/* ---------- panel ---------- */
+#panel{position:fixed;left:16px;top:16px;bottom:16px;width:316px;display:flex;flex-direction:column;
+  background:color-mix(in srgb,var(--ink) 94%,transparent);backdrop-filter:blur(6px);
+  border:1px solid var(--ink-line);border-radius:var(--r-panel);box-shadow:0 10px 30px rgba(10,20,30,.35);z-index:5}
+#panel header{padding:16px 18px 12px;border-bottom:1px solid var(--ink-line)}
+#panel h1{font-family:var(--font-title);font-weight:700;font-size:28px;line-height:1;margin:0;letter-spacing:.2px}
+#panel h1 span{display:block;font-weight:500;font-size:17px;color:var(--muted);margin-top:4px}
+.airac{margin-top:10px;font-size:13px;color:var(--muted)}
+.airac b{color:var(--paper);font-weight:600}
+#toggle-panel{display:none}
+.scroll{overflow:auto;padding:6px 18px 18px;flex:1}
+h2{font-family:var(--font-title);font-weight:600;font-size:18px;margin:18px 0 8px;color:var(--paper)}
+.search{position:relative;margin-top:12px}
+.search input{width:100%;padding:9px 11px;background:var(--ink-2);border:1px solid var(--ink-line);border-radius:var(--r-ctl)}
+.search input::placeholder{color:var(--muted)}
+
+.layer{display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:6px 4px;border-radius:var(--r-ctl);cursor:pointer;user-select:none}
+.layer:hover{background:var(--ink-2)}
+.layer input{position:absolute;opacity:0;pointer-events:none}
+.sw{width:18px;height:18px;border-radius:4px;border:2px solid var(--c);background:transparent;transition:background .15s}
+.layer input:checked + .sw{background:var(--c)}
+.layer input:focus-visible + .sw{outline:2px solid var(--magenta);outline-offset:2px}
+.layer .nm{line-height:1.15}
+.layer .nm small{display:block;color:var(--muted);font-size:12.5px}
+.layer .ct{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+.quick{display:flex;gap:6px;margin:4px 0 2px}
+.quick button,.chip{background:var(--ink-2);border:1px solid var(--ink-line);border-radius:999px;padding:4px 11px;cursor:pointer;font-size:13.5px}
+.quick button:hover,.chip:hover{border-color:var(--muted)}
+.classes{display:flex;gap:6px;flex-wrap:wrap}
+.chip[aria-pressed="true"]{background:var(--paper);color:var(--ink);border-color:var(--paper);font-weight:600}
+.row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:9px 0}
+.row label{color:var(--paper)}
+.row output{font-variant-numeric:tabular-nums;color:var(--muted);min-width:44px;text-align:right}
+input[type=range]{accent-color:var(--magenta);width:150px}
+.switch{display:flex;align-items:center;justify-content:space-between;margin:8px 0;cursor:pointer}
+.switch input{accent-color:var(--magenta);width:17px;height:17px}
+.places{display:flex;flex-wrap:wrap;gap:6px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:18px;border-top:1px solid var(--ink-line);padding-top:12px}
+.note a{color:var(--paper)}
+
+/* ---------- cinta de altitud ---------- */
+#tape{position:fixed;right:16px;top:16px;bottom:16px;width:86px;background:color-mix(in srgb,var(--tape) 92%,transparent);
+  border:1px solid var(--ink-line);border-radius:var(--r-panel);z-index:5;display:flex;flex-direction:column;align-items:center;padding:12px 0 10px}
+#tape .ttl{font-family:var(--font-title);font-size:15px;font-weight:600;color:var(--muted);text-align:center;line-height:1.05}
+#track{position:relative;flex:1;width:100%;margin:12px 0 8px}
+#scale{position:absolute;left:10px;top:0;bottom:0;width:30px}
+.tick{position:absolute;left:0;width:100%;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;transform:translateY(50%)}
+.tick::before{content:"";position:absolute;right:-6px;top:50%;width:5px;border-top:1px solid var(--ink-line)}
+.tick.maj{color:var(--paper)}
+#rail{position:absolute;right:20px;top:0;bottom:0;width:6px;background:var(--ink-line);border-radius:3px}
+#band{position:absolute;right:20px;width:6px;background:var(--magenta);border-radius:3px}
+.thumb{position:absolute;right:9px;width:28px;height:16px;margin-bottom:-8px;background:var(--paper);border-radius:4px;cursor:ns-resize;border:0;padding:0;
+  box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.thumb::after{content:"";position:absolute;left:7px;right:7px;top:7px;border-top:2px solid var(--ink)}
+#tape .read{font-variant-numeric:tabular-nums;font-size:13px;text-align:center;line-height:1.3}
+#tape .read b{display:block;font-family:var(--font-title);font-size:17px;font-weight:600}
+#clipbox{margin-top:8px;font-size:12px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);cursor:pointer;text-align:center}
+#clipbox input{accent-color:var(--magenta)}
+
+/* ---------- ficha de información ---------- */
+#info{position:fixed;right:118px;bottom:16px;width:340px;max-height:calc(100% - 32px);overflow:auto;background:color-mix(in srgb,var(--ink) 96%,transparent);
+  border:1px solid var(--ink-line);border-left:5px solid var(--c,#999);border-radius:var(--r-panel);padding:14px 16px 16px;z-index:6;display:none}
+#info.show{display:block;animation:pop .18s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+#info .kind{color:var(--muted);font-size:13.5px}
+#info h3{font-family:var(--font-title);font-size:23px;font-weight:600;margin:2px 28px 10px 0;line-height:1.1}
+#info .limits{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;align-items:baseline;margin-bottom:10px}
+#info .limits .big{font-family:var(--font-title);font-size:21px;font-weight:600;font-variant-numeric:tabular-nums}
+#info .cls{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:50%;border:2px solid var(--paper);font-family:var(--font-title);font-weight:700;font-size:18px;float:right;margin-left:10px}
+#info dl{margin:0;display:grid;grid-template-columns:96px 1fr;gap:5px 10px;font-size:14px}
+#info dt{color:var(--muted)}
+#info dd{margin:0}
+#info table.strata{width:100%;border-collapse:collapse;font-size:13.5px;margin:4px 0 4px;font-variant-numeric:tabular-nums}
+#info .strata th{color:var(--muted);font-weight:500;text-align:left;padding:3px 6px 3px 0;border-bottom:1px solid var(--ink-line)}
+#info .strata td{padding:4px 6px 4px 0;border-bottom:1px solid color-mix(in srgb,var(--ink-line) 55%,transparent)}
+#info .strata tr[data-id]{cursor:pointer}
+#info .strata tr[data-id]:hover td{background:var(--ink-2)}
+#info .strata tr.on td{background:var(--paper);color:var(--ink)}
+#info .hint{font-size:12.5px;color:var(--muted);margin:2px 0 10px}
+#info .approx{font-size:13px;background:var(--ink-2);border:1px dashed var(--muted);border-radius:6px;padding:6px 9px;margin:0 0 10px}
+#info .showall{margin-top:12px;width:100%;padding:8px;background:var(--ink-2);border:1px solid var(--ink-line);border-radius:var(--r-ctl);cursor:pointer;font-weight:600}
+#info .showall:hover{border-color:var(--muted)}
+#info .src{margin-top:10px;font-size:12.5px;color:var(--muted)}
+#info .x{position:absolute;right:10px;top:8px;background:none;border:0;font-size:22px;color:var(--muted);cursor:pointer;line-height:1}
+
+.deck-tooltip{font-family:var(--font-ui)!important;background:var(--ink)!important;color:var(--paper)!important;border:1px solid var(--ink-line);border-radius:8px;padding:7px 10px!important;font-size:13.5px!important;max-width:280px}
+#attr{position:fixed;left:348px;bottom:6px;font-size:11px;color:#27384a;background:rgba(255,255,255,.65);padding:2px 6px;border-radius:4px;z-index:4}
+#loading{position:fixed;inset:0;display:grid;place-items:center;font-family:var(--font-title);font-size:22px;color:var(--ink);pointer-events:none;z-index:3}
+
+@media (max-width:760px){
+  #panel{left:8px;right:8px;top:8px;bottom:auto;width:auto;max-height:62%}
+  #panel.collapsed .scroll{display:none}
+  #toggle-panel{display:block;position:absolute;right:12px;top:14px;background:var(--ink-2);border:1px solid var(--ink-line);border-radius:var(--r-ctl);padding:5px 10px;cursor:pointer}
+  #tape{top:auto;bottom:8px;right:8px;height:46%;width:74px}
+  #info{left:8px;right:90px;bottom:8px;width:auto;max-height:46%}
+  #attr{left:8px}
+}
+@media (prefers-reduced-motion:reduce){#info.show{animation:none}}
+</style>
+</head>
+<body>
+<div id="map" aria-label="Mapa 3D del espacio aéreo colombiano"></div>
+<div id="loading">Cargando relieve…</div>
+
+<aside id="panel">
+  <header>
+    <h1>Espacio aéreo de Colombia<span>Vista 3D sobre relieve real</span></h1>
+    <div class="airac" id="airac"></div>
+    <button id="toggle-panel" aria-expanded="true">Ocultar</button>
+    <div class="search">
+      <input id="q" list="qlist" placeholder="Buscar aeropuerto, ciudad o espacio aéreo" aria-label="Buscar">
+      <datalist id="qlist"></datalist>
+    </div>
+  </header>
+  <div class="scroll">
+    <h2>Capas de espacio aéreo</h2>
+    <div class="quick"><button data-q="all">Todas</button><button data-q="none">Ninguna</button><button data-q="terminal">Solo terminal</button></div>
+    <div id="layers"></div>
+
+    <h2>Clase de espacio</h2>
+    <div class="classes" id="classes"></div>
+
+    <h2>Mapa</h2>
+    <div class="row"><label for="ex">Exageración vertical</label><input id="ex" type="range" min="1" max="5" step="0.5" value="1"><output id="exv">1×</output></div>
+    <div class="row"><label for="op">Opacidad</label><input id="op" type="range" min="0.05" max="0.8" step="0.05" value="0.32"><output id="opv">32%</output></div>
+    <div class="row"><label>Fondo</label><div class="classes" id="bases"></div></div>
+    <label class="switch">Aeropuertos controlados <input type="checkbox" id="sw-ap" checked></label>
+    <label class="switch">Cascos urbanos y ciudades <input type="checkbox" id="sw-urb" checked></label>
+    <label class="switch">Zonas transcritas de cartas escaneadas <input type="checkbox" id="sw-approx" checked></label>
+    <label class="switch">Nombres de los espacios <input type="checkbox" id="sw-lbl"></label>
+    <label class="switch">Bordes de los volúmenes <input type="checkbox" id="sw-wire" checked></label>
+
+    <h2>Ir a</h2>
+    <div class="places" id="places"></div>
+
+    <p class="note">Datos del <a href="https://eaip-colombia.atnaerocivil.gov.co/eaip/" target="_blank" rel="noopener">eAIP Colombia</a> (ENR 2.1, ENR 5.1/5.5, ENR 6.2/6.4 y AD 2.17). Material de estudio: <b>no usar para navegación</b>. Los límites AGL de CTR/ATZ se dibujan sumando la elevación del aeródromo; FL se dibuja como pies sobre el nivel del mar.</p>
+  </div>
+</aside>
+
+<div id="tape" role="group" aria-label="Franja de altitud">
+  <div class="ttl">Franja de<br>altitud</div>
+  <div id="track">
+    <div id="scale"></div>
+    <div id="rail"></div>
+    <div id="band"></div>
+    <button class="thumb" id="th-hi" aria-label="Altitud superior" role="slider"></button>
+    <button class="thumb" id="th-lo" aria-label="Altitud inferior" role="slider"></button>
+  </div>
+  <div class="read"><b id="rd-hi"></b><span id="rd-lo"></span></div>
+  <label id="clipbox"><input type="checkbox" id="clip">Recortar a la franja</label>
+</div>
+
+<section id="info" aria-live="polite"></section>
+<div id="attr">Relieve y curvas de nivel: Mapzen/AWS Terrain Tiles · Costas y ciudades: Natural Earth</div>
+
+<script>
+const FT = 0.3048;
+const TYPES = [
+  {k:"FIR", n:"FIR", d:"Región de información de vuelo", c:"#8A97A6", on:false},
+  {k:"UTA", n:"UTA", d:"Área de control superior (sectores ACC)", c:"#8B5CF6", on:false},
+  {k:"CTA", n:"CTA", d:"Áreas de control", c:"#2E9E6A", on:false},
+  {k:"FIC", n:"Sectores FIC / APP", d:"Sector Central y Villavicencio", c:"#E08A1E", on:false},
+  {k:"TMA", n:"TMA", d:"Áreas de control terminal y sus estratos", c:"#2F6FDE", on:true},
+  {k:"CTR", n:"CTR", d:"Zonas de control", c:"#D6247A", on:true},
+  {k:"ATZ", n:"ATZ", d:"Zonas de tránsito de aeródromo", c:"#F472B6", on:true},
+  {k:"SKR", n:"Restringidas (SKR)", d:"ENR 5.1", c:"#C62828", on:true},
+  {k:"SKP", n:"Prohibidas (SKP)", d:"ENR 5.1", c:"#6B0F1A", on:true},
+  {k:"SKD", n:"Peligrosas (SKD)", d:"ENR 5.1", c:"#E8A800", on:true},
+  {k:"DEP", n:"Aviación deportiva", d:"Parapente, paramotor, planeadores", c:"#14A3A0", on:false},
+];
+const TYPE = Object.fromEntries(TYPES.map(t=>[t.k,t]));
+const hex = h => [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+const MAXFT = 60000;
+
+const S = {
+  on: Object.fromEntries(TYPES.map(t=>[t.k,t.on])),
+  cls: {A:true,C:true,D:true,E:true,G:true,"":true},
+  ex: 1, op: .32, base: "topo", ap:true, urb:true, lbl:false, wire:true,
+  lo: 0, hi: MAXFT, clip:false, sel:null, sub:null, hov:null, approx:true
+};
+
+// orden de dibujo: lo grande primero para que la transparencia se lea bien
+const ORDER = ["FIR","UTA","CTA","FIC","TMA","DEP","CTR","ATZ","SKD","SKR","SKP"];
+const DATA = window.AIRSPACE.slice().sort((a,b)=>ORDER.indexOf(a.t)-ORDER.indexOf(b.t) || (b.upf-b.lof)-(a.upf-a.lof));
+const counts = {}; DATA.forEach(d=>counts[d.t]=(counts[d.t]||0)+1);
+
+document.getElementById("airac").innerHTML = `<b>${AIRSPACE_META.airac}</b><br>${AIRSPACE_META.fuente}`;
+
+// ---------- panel de capas ----------
+const layersEl = document.getElementById("layers");
+TYPES.forEach(t=>{
+  const l = document.createElement("label"); l.className="layer"; l.style.setProperty("--c",t.c);
+  l.innerHTML = `<input type="checkbox" data-k="${t.k}" ${t.on?"checked":""}><span class="sw"></span><span class="nm">${t.n}<small>${t.d}</small></span><span class="ct">${counts[t.k]||0}</span>`;
+  layersEl.appendChild(l);
+});
+layersEl.addEventListener("change",e=>{ if(e.target.dataset.k){S.on[e.target.dataset.k]=e.target.checked; render();}});
+document.querySelector(".quick").addEventListener("click",e=>{
+  const q=e.target.dataset.q; if(!q) return;
+  TYPES.forEach(t=>S.on[t.k] = q==="all" ? true : q==="none" ? false : ["TMA","CTR","ATZ"].includes(t.k));
+  layersEl.querySelectorAll("input").forEach(i=>i.checked=S.on[i.dataset.k]); render();
+});
+const clsEl=document.getElementById("classes");
+[["A","Clase A"],["C","Clase C"],["D","Clase D"],["E","Clase E"],["G","Clase G"],["","Sin clase"]].forEach(([k,n])=>{
+  const b=document.createElement("button"); b.className="chip"; b.textContent=n; b.setAttribute("aria-pressed","true");
+  b.onclick=()=>{S.cls[k]=!S.cls[k]; b.setAttribute("aria-pressed",S.cls[k]); render();};
+  clsEl.appendChild(b);
+});
+const bind=(id,key,fmt)=>{const el=document.getElementById(id),out=document.getElementById(id+"v");
+  el.addEventListener("input",()=>{S[key]=+el.value; if(out) out.textContent=fmt(+el.value); render();});};
+bind("ex","ex",v=>v+"×"); bind("op","op",v=>Math.round(v*100)+"%");
+[["sw-approx","approx"],["sw-ap","ap"],["sw-urb","urb"],["sw-lbl","lbl"],["sw-wire","wire"],["clip","clip"]].forEach(([id,k])=>
+  document.getElementById(id).addEventListener("change",e=>{S[k]=e.target.checked; render();}));
+document.getElementById("toggle-panel").onclick=e=>{
+  const p=document.getElementById("panel"); p.classList.toggle("collapsed");
+  e.target.textContent=p.classList.contains("collapsed")?"Mostrar":"Ocultar"; e.target.setAttribute("aria-expanded",!p.classList.contains("collapsed"));};
+
+const BASES={topo:["Topográfico",null,0],
+  sat:["Satélite","https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",14]};
+const basesEl=document.getElementById("bases");
+if(window.NO_TILES) basesEl.closest(".row").hidden=true;
+Object.entries(BASES).forEach(([k,[n]])=>{const b=document.createElement("button");b.className="chip";b.textContent=n;b.setAttribute("aria-pressed",k===S.base);
+  b.onclick=()=>{S.base=k;basesEl.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  document.getElementById("attr").textContent=k==="sat"?"Relieve: Mapzen/AWS Terrain Tiles · Imagen: Esri World Imagery · Ciudades: Natural Earth":"Relieve y curvas de nivel: Mapzen/AWS Terrain Tiles · Costas y ciudades: Natural Earth";render();};basesEl.appendChild(b);});
+
+// ---------- cinta de altitud ----------
+const track=document.getElementById("track"), thLo=document.getElementById("th-lo"), thHi=document.getElementById("th-hi");
+// escala no lineal: más resolución en la parte baja (donde viven CTR y TMA)
+const toFrac = ft => Math.sqrt(ft/MAXFT);
+const toFt = f => Math.round(MAXFT*f*f/500)*500;
+const fmtAlt = ft => ft===0?"GND": ft>=MAXFT?"UNL": ft>=18000?"FL"+String(Math.round(ft/100)).padStart(3,"0"): ft.toLocaleString("es-CO")+" ft";
+function drawScale(){
+  const sc=document.getElementById("scale"); sc.innerHTML="";
+  [0,2000,5000,10000,14500,19500,24500,35000,45000,60000].forEach(ft=>{
+    const d=document.createElement("div"); d.className="tick"+([0,10000,24500,60000].includes(ft)?" maj":"");
+    d.style.bottom=(toFrac(ft)*100)+"%"; d.textContent= ft===0?"GND":ft>=18000?"FL"+ft/100:(ft/1000)+"k"; sc.appendChild(d);
+  });
+}
+function drawTape(){
+  thLo.style.bottom=(toFrac(S.lo)*100)+"%"; thHi.style.bottom=(toFrac(S.hi)*100)+"%";
+  const b=document.getElementById("band"); b.style.bottom=(toFrac(S.lo)*100)+"%"; b.style.height=((toFrac(S.hi)-toFrac(S.lo))*100)+"%";
+  document.getElementById("rd-hi").textContent=fmtAlt(S.hi); document.getElementById("rd-lo").textContent=fmtAlt(S.lo);
+  thLo.setAttribute("aria-valuetext",fmtAlt(S.lo)); thHi.setAttribute("aria-valuetext",fmtAlt(S.hi));
+}
+function dragThumb(th,which){
+  const move=ev=>{const r=track.getBoundingClientRect(); const y=(ev.touches?ev.touches[0].clientY:ev.clientY);
+    let f=Math.min(1,Math.max(0,(r.bottom-y)/r.height)); let ft=toFt(f);
+    if(which==="lo") S.lo=Math.min(ft,S.hi-500); else S.hi=Math.max(ft,S.lo+500);
+    drawTape(); render(); ev.preventDefault();};
+  const up=()=>{removeEventListener("pointermove",move); removeEventListener("pointerup",up);};
+  th.addEventListener("pointerdown",e=>{addEventListener("pointermove",move); addEventListener("pointerup",up); e.preventDefault();});
+  th.addEventListener("keydown",e=>{const step=e.shiftKey?5000:500; let d=0;
+    if(e.key==="ArrowUp")d=step; if(e.key==="ArrowDown")d=-step; if(!d) return;
+    if(which==="lo") S.lo=Math.max(0,Math.min(S.lo+d,S.hi-500)); else S.hi=Math.min(MAXFT,Math.max(S.hi+d,S.lo+500));
+    drawTape(); render(); e.preventDefault();});
+}
+dragThumb(thLo,"lo"); dragThumb(thHi,"hi"); drawScale(); drawTape();
+
+// ---------- conjuntos (un TMA, CTA, CTR… con todos sus sectores y estratos) ----------
+const GROUPS=new Map();
+DATA.forEach(d=>{if(!GROUPS.has(d.gr))GROUPS.set(d.gr,[]);GROUPS.get(d.gr).push(d);});
+const gcount={};GROUPS.forEach(v=>gcount[v[0].t]=(gcount[v[0].t]||0)+1);
+layersEl.querySelectorAll(".layer").forEach(l=>{const k=l.querySelector("input").dataset.k;l.querySelector(".ct").textContent=gcount[k]||0;});
+const pretty=g=>g.replace(/^(TMA|CTA|UTA|FIR|CTR|ATZ) /,"$1 ").replace(/\b([A-ZÁÉÍÓÚÑ])([A-ZÁÉÍÓÚÑ]+)\b/g,(m,a,b)=>["TMA","CTA","UTA","FIR","CTR","ATZ","SKR","SKP","SKD","NE","NW","SE","SW"].includes(m)||/^SK/.test(m)?m:a+b.toLowerCase());
+function groupCenter(list){let x=0,y=0,n=0;list.forEach(d=>d.p.forEach(([px,py])=>{x+=px;y+=py;n++;}));return [x/n,y/n];}
+
+// ---------- búsqueda y lugares ----------
+const ql=document.getElementById("qlist"), qIndex=new Map();
+AIRPORTS.forEach(a=>{const k=`${a.icao} · ${a.city} – ${a.name}`; qIndex.set(k,{lon:a.lon,lat:a.lat,zoom:10.5}); ql.insertAdjacentHTML("beforeend",`<option value="${k}">`);});
+GROUPS.forEach((list,g)=>{const t=list[0].t,[lon,lat]=groupCenter(list);const k=pretty(g);
+  qIndex.set(k,{lon,lat,zoom:t==="CTR"||t==="ATZ"?10:t==="FIR"||t==="UTA"?5.4:t==="TMA"||t==="CTA"?7.6:9.5,grp:g});
+  ql.insertAdjacentHTML("beforeend",`<option value="${k}">`);});
+document.getElementById("q").addEventListener("change",e=>{const t=qIndex.get(e.target.value); if(!t) return;
+  if(t.grp){const ty=GROUPS.get(t.grp)[0].t;S.on[ty]=true; layersEl.querySelector(`[data-k="${ty}"]`).checked=true; select(t.grp);} fly(t.lon,t.lat,t.zoom);});
+const PLACES=[["Colombia",-73.6,4.2,5.3,0,35],["Bogotá",-74.15,4.7,9.2,-20,60],["Medellín",-75.48,6.2,9.2,15,60],["Cali",-76.38,3.55,9,-10,58],["Barranquilla",-74.85,10.85,8.6,0,55],["Eje Cafetero",-75.65,4.85,9,20,60],["San Andrés",-81.7,12.6,8.5,0,50]];
+const plEl=document.getElementById("places");
+PLACES.forEach(([n,lon,lat,z,b,p])=>{const btn=document.createElement("button"); btn.className="chip"; btn.textContent=n; btn.onclick=()=>fly(lon,lat,z,b,p); plEl.appendChild(btn);});
+
+// ---------- ficha del conjunto ----------
+const info=document.getElementById("info");
+function select(g,sub=null){
+  S.sel=g; S.sub=sub; if(!g){info.classList.remove("show"); render(); return;}
+  const list=GROUPS.get(g).slice().sort((a,b)=>(a.sb||"").localeCompare(b.sb||"","es",{numeric:true})||b.upf-a.upf);
+  const d0=list[0], t=TYPE[d0.t];
+  info.style.setProperty("--c",t.c);
+  const uniq=k=>[...new Set(list.map(d=>d[k]).filter(Boolean))];
+  const row=(k,v)=>v.length?`<dt>${k}</dt><dd>${v.join("<br>")}</dd>`:"";
+  const lo=Math.min(...list.map(d=>d.lof)), hi=Math.max(...list.map(d=>d.upf));
+  const loTxt=list.find(d=>d.lof===lo).lo, hiTxt=list.find(d=>d.upf===hi).up;
+  const strata=list.length>1?`<table class="strata"><thead><tr><th>${list.some(d=>d.sb)?"Sector":"Estrato"}</th><th>Clase</th><th>Base</th><th>Techo</th></tr></thead><tbody>${
+    list.map(d=>`<tr data-id="${d.id}" tabindex="0" class="${S.sub===d.id?"on":""}"><td>${d.sb||"—"}</td><td>${d.c||"—"}</td><td>${d.lo}</td><td>${d.up}</td></tr>`).join("")}</tbody></table>
+    <p class="hint">Toca una fila para resaltar ese sector o estrato.</p>`:"";
+  info.innerHTML=`<button class="x" aria-label="Cerrar y mostrar todos">×</button>
+    <div class="kind">${t.n} · ${t.d}</div>
+    <h3>${list.length===1&&d0.c?`<span class="cls" title="Clase ${d0.c}">${d0.c}</span>`:""}${pretty(g)}</h3>
+    ${d0.ax?`<p class="approx">Coordenadas transcritas a mano de la carta escaneada del AIP (no están en texto). Conviene verificarlas contra la carta.</p>`:""}
+    <div class="limits"><span class="kind">Techo</span><span class="big">${hiTxt}</span><span class="kind">Base</span><span class="big">${loTxt}</span></div>
+    ${strata}
+    <dl>${row("Dependencia",uniq("u"))}${row(d0.t==="DEP"?"Actividad":"Distintivo",uniq("cs"))}${row("Frecuencia",uniq("fq"))}${row("Notas",uniq("r"))}</dl>
+    <div class="src">Fuente: ${uniq("s").join(", ")}</div>
+    <button class="showall">Mostrar todos los espacios</button>`;
+  info.classList.add("show"); info.querySelector(".x").onclick=()=>select(null); info.querySelector(".showall").onclick=()=>select(null);
+  info.querySelectorAll("tr[data-id]").forEach(tr=>{const go=()=>{const id=+tr.dataset.id;select(g,S.sub===id?null:id);};tr.onclick=go;tr.onkeydown=e=>{if(e.key==="Enter")go();};});
+  render();
+}
+addEventListener("keydown",e=>{if(e.key==="Escape") select(null);});
+
+// ---------- deck.gl ----------
+const INITIAL={longitude:-73.6,latitude:4.2,zoom:5.3,pitch:35,bearing:0,maxPitch:85,minZoom:4};
+let viewState=INITIAL;
+const deckgl=new deck.Deck({
+  parent:document.getElementById("map"), initialViewState:INITIAL, controller:{touchRotate:true},
+  onViewStateChange:({viewState:v})=>{viewState=v; return v;},
+  getTooltip:({object,layer})=>{
+    if(!object) return null;
+    if(layer.id.startsWith("air")) return {html:`<b>${pretty(object.gr)}</b>${object.sb?`<br>${object.sb}`:""}<br>${object.lo} – ${object.up}${object.c?` · clase ${object.c}`:""}`};
+    if(layer.id==="ap") return {html:`<b>${object.icao}</b> ${object.city}<br>${object.name}<br>Elev ${object.elev_ft} ft${object.twr.length?` · TWR ${object.twr[0]}`:""}`};
+    return null;
+  },
+  onHover:({object,layer})=>{const g=!S.sel&&object&&layer&&layer.id==="air"?object.gr:null; if(g!==S.hov){S.hov=g; render();}},
+  onClick:({object,layer})=>{ if(object && layer && layer.id.startsWith("air")) select(object.gr); else if(!object) select(null); },
+  onLoad:()=>setTimeout(()=>document.getElementById("loading")?.remove(),1500)
+});
+function fly(lon,lat,zoom,bearing=viewState.bearing,pitch=Math.max(viewState.pitch,50)){
+  deckgl.setProps({initialViewState:{...viewState,longitude:lon,latitude:lat,zoom,bearing,pitch,
+    transitionDuration:matchMedia("(prefers-reduced-motion: reduce)").matches?0:1800,transitionInterpolator:new deck.FlyToInterpolator()}});
+}
+
+function visible(){
+  if(S.sel) return GROUPS.get(S.sel).filter(d=>d.upf>S.lo && d.lof<S.hi);
+  return DATA.filter(d=>S.on[d.t] && (S.approx||!d.ax) && S.cls[d.c||""]!==false && d.upf>S.lo && d.lof<S.hi);
+}
+function render(){
+  const ex=S.ex, m=ft=>ft*FT*ex;
+  const base=d=>S.clip?Math.max(d.lof,S.lo):d.lof, top=d=>S.clip?Math.min(d.upf,S.hi):d.upf;
+  const data=visible();
+  const key=[ex,S.clip,S.lo,S.hi,S.op,S.sel,S.sub,S.hov].join("|");
+  const alpha=d=>{let a=S.op; if(S.sel){a=Math.max(a,.35)*(S.sub==null||S.sub===d.id?1.5:.55);} else if(S.hov===d.gr)a*=1.45; return Math.min(235,Math.round(255*a));};
+  const line=d=>{if(S.sel===d.gr) return S.sub===d.id?[22,34,46,255]:[...hex(TYPE[d.t].c),235]; if(S.hov===d.gr) return [22,34,46,200]; return [...hex(TYPE[d.t].c),d.ax?120:170];};
+  const terrainExt=new deck._TerrainExtension();
+  const layers=[
+    S.base==="topo" ? new deck.TerrainLayer({
+      id:"terrain-static-"+ex, bounds:TERRAIN_STATIC.bounds, meshMaxError:20,
+      elevationDecoder:{rScaler:TERRAIN_STATIC.metersPerStep*ex,gScaler:0,bScaler:0,offset:0},
+      elevationData:TERRAIN_STATIC.elev, texture:TERRAIN_STATIC.tex, operation:"terrain+draw"
+    }) : new deck.TerrainLayer({
+      id:"terrain-"+ex+"-"+S.base, minZoom:0, maxZoom:BASES[S.base][2]-1, strategy:"no-overlap",
+      elevationDecoder:{rScaler:256*ex,gScaler:1*ex,bScaler:ex/256,offset:-32768*ex},
+      elevationData:"https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png",
+      texture:BASES[S.base][1],
+      extent:[-84.5,-6,-65.5,16.5], operation:"terrain+draw", color:[200,210,215]
+    }),
+    S.urb && new deck.SolidPolygonLayer({id:"urban",data:URBAN,getPolygon:d=>d,getFillColor:[214,120,52,190],extensions:[terrainExt]}),
+    new deck.SolidPolygonLayer({
+      id:"air", data, extruded:true, wireframe:S.wire||!!S.sel, pickable:true,
+      getPolygon:d=>d.p.map(([x,y])=>[x,y,m(base(d))]),
+      getElevation:d=>Math.max(1,m(top(d))-m(base(d))),
+      getFillColor:d=>[...hex(TYPE[d.t].c),alpha(d)],
+      getLineColor:line,
+      material:{ambient:.55,diffuse:.55,shininess:8,specularColor:[40,40,40]},
+      parameters:{depthWriteEnabled:false},
+      updateTriggers:{getPolygon:key,getElevation:key,getFillColor:key,getLineColor:key}
+    }),
+    S.urb && new deck.TextLayer({id:"cities",data:CITIES.filter(c=>c.p>=50000),getPosition:d=>[d.x,d.y],getText:d=>d.n,
+      getSize:d=>d.p>1e6?15:d.p>3e5?13:11.5,getColor:[60,32,12,255],outlineWidth:3,outlineColor:[255,246,236,230],fontSettings:{sdf:true},
+      fontFamily:"Barlow Semi Condensed",fontWeight:600,characterSet:"auto",getPixelOffset:[0,-2],
+      extensions:[terrainExt],terrainDrawMode:"offset",parameters:{depthCompare:"always"}}),
+    S.ap && new deck.ScatterplotLayer({id:"ap",data:AIRPORTS,pickable:true,getPosition:d=>[d.lon,d.lat,m(d.elev_ft)+30],
+      getRadius:900,radiusMinPixels:4,radiusMaxPixels:9,stroked:true,lineWidthMinPixels:2,getFillColor:[255,255,255],getLineColor:[22,34,46],
+      parameters:{depthCompare:"always"},updateTriggers:{getPosition:ex}}),
+    S.ap && new deck.TextLayer({id:"ap-lbl",data:AIRPORTS,getPosition:d=>[d.lon,d.lat,m(d.elev_ft)+30],getText:d=>d.icao,
+      getSize:12.5,getColor:[22,34,46,255],background:true,getBackgroundColor:[255,255,255,225],backgroundPadding:[4,2],
+      fontFamily:"Barlow Semi Condensed",fontWeight:600,getPixelOffset:[0,-16],parameters:{depthCompare:"always"},updateTriggers:{getPosition:ex}}),
+    S.lbl && new deck.TextLayer({id:"air-lbl",data:[...new Set(data.filter(d=>d.t!=="FIR").map(d=>d.gr))].map(g=>{const l=GROUPS.get(g).filter(d=>data.includes(d));return {g,t:l[0].t,c:groupCenter(l),z:Math.max(...l.map(top))};}),
+      getPosition:d=>[d.c[0],d.c[1],m(d.z)],getText:d=>pretty(d.g),getSize:12.5,characterSet:"auto",getColor:d=>[...hex(TYPE[d.t].c),255],
+      outlineWidth:3,outlineColor:[255,255,255,230],fontSettings:{sdf:true},fontFamily:"Barlow Semi Condensed",fontWeight:600,
+      parameters:{depthCompare:"always"},updateTriggers:{getPosition:key}})
+  ].filter(Boolean);
+  deckgl.setProps({layers});
+}
+render();
+</script>
+</body>
+</html>
